@@ -64,10 +64,10 @@ with col1:
 with col2:
     st.subheader("📈 空氣線圖 (Psychrometric Chart)")
     
-    # 1. 載入 psychrochart 新版 ASHRAE 風格圖表
-    chart = PsychroChart("ashrae")
+    # 1. 使用 load_config 安全載入 ASHRAE 設定檔建立圖表
+    chart = PsychroChart.load_config("ashrae")
     
-    # 2. 繪製圖表 (新版語法直接由 plot 回傳 fig 與 ax)
+    # 2. 繪製圖表
     fig, ax = chart.plot(figsize=(10, 7))
 
     # 3. 如果計算成功，把狀態點繪製在空氣線圖上
