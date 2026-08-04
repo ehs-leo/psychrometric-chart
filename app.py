@@ -64,16 +64,14 @@ with col1:
 with col2:
     st.subheader("📈 空氣線圖 (Psychrometric Chart)")
     
-    # 1. 載入 psychrochart 預設的 ASHRAE 風格圖表
-    chart = PsychroChart.create_default_chart(style="ashrae")
+    # 1. 載入 psychrochart 新版 ASHRAE 風格圖表
+    chart = PsychroChart("ashrae")
     
-    # 設定圖表標題與大小
-    fig, ax = plt.subplots(figsize=(10, 7))
-    chart.plot(ax=ax)
+    # 2. 繪製圖表 (新版語法直接由 plot 回傳 fig 與 ax)
+    fig, ax = chart.plot(figsize=(10, 7))
 
-    # 2. 如果計算成功，把狀態點繪製在空氣線圖上
+    # 3. 如果計算成功，把狀態點繪製在空氣線圖上
     if calc_success:
-        # psychrochart 繪點的座標為 (乾球溫度, 絕對濕度g/kg)
         points = {
             'Point1': {
                 'label': f'狀態點 1 ({T_db}°C, {RH}%)',
@@ -85,8 +83,7 @@ with col2:
                 }
             }
         }
-        # 繪製點位
         chart.plot_points_d(points, ax=ax)
 
-    # 3. 輸出圖表至 Streamlit 畫面
+    # 4. 輸出圖表至 Streamlit 畫面
     st.pyplot(fig)
