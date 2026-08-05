@@ -101,6 +101,9 @@ def h_line(h_kjkg: float, n=60):
     return Ts[mask], Ws[mask]
 
 
+
+
+
 def w_for_v(T_c, v_target):
     """等比容線封閉解（理想氣體近似，與原程式 specific_volume 公式互逆）"""
     T_K = T_c + 273.15
@@ -154,15 +157,40 @@ def draw_chart(db, rh, state, skew=0.0, show_h=True, show_v=True, show_wb=True):
             ax.text(Xs[idx], Ys[idx], f" {level}%", fontsize=7, color="#7f8c8d", va="center", zorder=3)
 
     # --- 等焓線 ---
+    y_top = W_MAX
     if show_h:
+        h_exit_points = []  # (hv, X_exit, Y_exit) 供斜交模式畫外側刻度尺用
+
         for hv in range(10, 121, 10):
             Ts, Ws = h_line(float(hv))
             if len(Ts) < 2:
                 continue
             Xs, Ys = to_screen(Ts, Ws, skew)
-            ax.plot(Xs, Ys, color="#e67e22", linewidth=0.6, alpha=0.55, zorder=1)
-            if len(Xs):
+            ax.plot(Xs, Ys, color="#e67e22", linewidth=0.7, alpha=0.6, zorder=1)
+
+            if skew > 0:
+                # 出口點＝該焓線在圖表格內最靠近飽和曲線／上緣的一端
+                h_exit_points.append((hv, Xs[0], Ys[0]))
+            else:
                 ax.text(Xs[-1], Ys[-1], f"{hv}", fontsize=6, color="#e67e22", alpha=0.8)
+
+        # --- 斜交模式：外側焓值刻度尺（每條線的出口點正上方拉細指示線，統一對齊到同一條尺）---
+        if skew > 0 and h_exit_points:
+            y_ruler = W_MAX + 6.0
+            y_top = y_ruler + 2.0
+            xs_exit = [p[1] for p in h_exit_points]
+            x_ruler_min, x_ruler_max = min(xs_exit) - 2, max(xs_exit) + 2
+
+            ax.plot([x_ruler_min, x_ruler_max], [y_ruler, y_ruler],
+                     color="#c0620a", linewidth=1.2, zorder=2)
+            for hv, xe, ye in h_exit_points:
+                ax.plot([xe, xe], [ye, y_ruler], color="#e67e22",
+                         linewidth=0.5, alpha=0.45, linestyle=(0, (2, 2)), zorder=1)
+                ax.plot([xe], [y_ruler], marker="|", color="#c0620a", markersize=6, zorder=2)
+                ax.text(xe, y_ruler + 0.8, f"{hv}", fontsize=6.5, color="#c0620a",
+                         fontweight="bold", ha="center", zorder=3)
+            ax.text(x_ruler_min, y_ruler + 2.4, "焓值 h (kJ/kg 乾空氣)", fontsize=7.5,
+                     color="#c0620a", fontweight="bold")
 
     # --- 等比容線 ---
     if show_v:
@@ -208,7 +236,7 @@ def draw_chart(db, rh, state, skew=0.0, show_h=True, show_v=True, show_wb=True):
     )
 
     ax.set_xlim(0, x_max)
-    ax.set_ylim(0, W_MAX)
+    ax.set_ylim(0, y_top)
     ax.set_xticks(list(range(0, 51, 10)))
     ax.set_xticklabels([str(t) for t in range(0, 51, 10)])
     ax.set_xlabel("乾球溫度 Dry-Bulb Temperature, DB (°C)", fontsize=10, fontweight="bold")
@@ -216,7 +244,8 @@ def draw_chart(db, rh, state, skew=0.0, show_h=True, show_v=True, show_wb=True):
     title = "ASHRAE 風格空氣線圖（斜交座標）" if skew > 0 else "空氣線圖（直角座標，簡明版）"
     ax.set_title(title, fontsize=13, fontweight="bold", pad=10)
     ax.grid(True, linestyle=":", alpha=0.3)
-    ax.legend(loc="upper left", fontsize=8, framealpha=0.9)
+    legend_loc = "lower right" if skew > 0 else "upper left"
+    ax.legend(loc=legend_loc, fontsize=8, framealpha=0.9)
     fig.tight_layout()
     return fig
 
