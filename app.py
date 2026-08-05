@@ -101,6 +101,22 @@ def h_line(h_kjkg: float, n=60):
     return Ts[mask], Ws[mask]
 
 
+@st.cache_data
+def dew_point_T(w_target: float) -> float:
+    """飽和曲線反函數：給定濕度比，反推該濕度下的飽和(露點)溫度。
+    用於將背景骨架線裁切成貼合飽和曲線的梯形外觀。"""
+    if w_target <= sat_w_g(T_MIN):
+        return T_MIN
+    lo, hi = T_MIN, T_MAX
+    for _ in range(25):
+        mid = (lo + hi) / 2.0
+        if sat_w_g(round(mid, 2)) < w_target:
+            lo = mid
+        else:
+            hi = mid
+    return (lo + hi) / 2.0
+
+
 
 
 
@@ -130,16 +146,21 @@ def draw_chart(db, rh, state, skew=0.0, show_h=True, show_v=True, show_wb=True):
 
     x_max = T_MAX + skew * W_MAX
 
-    # --- 背景骨架格線（僅斜交模式需要，呈現平行四邊形外觀）---
-    if skew > 0:
-        for t in range(0, 51, 10):
-            x0, y0 = to_screen(t, 0, skew)
-            x1, y1 = to_screen(t, W_MAX, skew)
-            ax.plot([x0, x1], [y0, y1], color="#dcdcdc", linewidth=0.6, zorder=0)
-        for wv in range(0, 31, 5):
-            x0, y0 = to_screen(0, wv, skew)
-            x1, y1 = to_screen(50, wv, skew)
-            ax.plot([x0, x1], [y0, y1], color="#dcdcdc", linewidth=0.6, zorder=0)
+    # --- 背景骨架格線：貼合飽和曲線裁切，呈現梯形外觀（兩種模式皆適用）---
+    for t in range(0, 51, 5):
+        w_top = min(W_MAX, sat_w_g(float(t)))
+        if w_top <= 0:
+            continue
+        x0, y0 = to_screen(t, 0, skew)
+        x1, y1 = to_screen(t, w_top, skew)
+        lw = 0.8 if t % 10 == 0 else 0.4
+        ax.plot([x0, x1], [y0, y1], color="#d5d5d5", linewidth=lw, zorder=0)
+    for wv in range(0, 31, 2):
+        t_left = dew_point_T(float(wv))
+        x0, y0 = to_screen(t_left, wv, skew)
+        x1, y1 = to_screen(50, wv, skew)
+        lw = 0.8 if wv % 10 == 0 else 0.4
+        ax.plot([x0, x1], [y0, y1], color="#d5d5d5", linewidth=lw, zorder=0)
 
     # --- 相對濕度曲線 ---
     rh_levels = [10, 20, 30, 40, 50, 60, 70, 80, 90, 100]
@@ -156,41 +177,29 @@ def draw_chart(db, rh, state, skew=0.0, show_h=True, show_v=True, show_wb=True):
             idx = min(int(len(Ts) * 0.88), len(Ts) - 1)
             ax.text(Xs[idx], Ys[idx], f" {level}%", fontsize=7, color="#7f8c8d", va="center", zorder=3)
 
-    # --- 等焓線 ---
+    # --- 等焓線：畫在有效區內（飽和曲線以下），並在貼近飽和曲線的端點直接標數字 ---
     y_top = W_MAX
     if show_h:
-        h_exit_points = []  # (hv, X_exit, Y_exit) 供斜交模式畫外側刻度尺用
-
         for hv in range(10, 121, 10):
             Ts, Ws = h_line(float(hv))
             if len(Ts) < 2:
                 continue
             Xs, Ys = to_screen(Ts, Ws, skew)
-            ax.plot(Xs, Ys, color="#e67e22", linewidth=0.7, alpha=0.6, zorder=1)
+            ax.plot(Xs, Ys, color="#e67e22", linewidth=0.8, alpha=0.65, zorder=1)
 
-            if skew > 0:
-                # 出口點＝該焓線在圖表格內最靠近飽和曲線／上緣的一端
-                h_exit_points.append((hv, Xs[0], Ys[0]))
-            else:
-                ax.text(Xs[-1], Ys[-1], f"{hv}", fontsize=6, color="#e67e22", alpha=0.8)
-
-        # --- 斜交模式：外側焓值刻度尺（每條線的出口點正上方拉細指示線，統一對齊到同一條尺）---
-        if skew > 0 and h_exit_points:
-            y_ruler = W_MAX + 6.0
-            y_top = y_ruler + 2.0
-            xs_exit = [p[1] for p in h_exit_points]
-            x_ruler_min, x_ruler_max = min(xs_exit) - 2, max(xs_exit) + 2
-
-            ax.plot([x_ruler_min, x_ruler_max], [y_ruler, y_ruler],
-                     color="#c0620a", linewidth=1.2, zorder=2)
-            for hv, xe, ye in h_exit_points:
-                ax.plot([xe, xe], [ye, y_ruler], color="#e67e22",
-                         linewidth=0.5, alpha=0.45, linestyle=(0, (2, 2)), zorder=1)
-                ax.plot([xe], [y_ruler], marker="|", color="#c0620a", markersize=6, zorder=2)
-                ax.text(xe, y_ruler + 0.8, f"{hv}", fontsize=6.5, color="#c0620a",
-                         fontweight="bold", ha="center", zorder=3)
-            ax.text(x_ruler_min, y_ruler + 2.4, "焓值 h (kJ/kg 乾空氣)", fontsize=7.5,
-                     color="#c0620a", fontweight="bold")
+            # 端點在飽和曲線附近（線的起點，T 較低那端）→ 沿線方向外推一小段放標籤
+            if len(Xs) >= 2:
+                dx, dy = Xs[0] - Xs[1], Ys[0] - Ys[1]
+                norm = max((dx**2 + dy**2) ** 0.5, 1e-6)
+                lx = Xs[0] + dx / norm * 1.3
+                ly = Ys[0] + dy / norm * 1.3
+                ax.text(lx, ly, f"{hv}", fontsize=6.5, color="#c0620a",
+                         fontweight="bold", ha="center", va="center", zorder=4,
+                         bbox=dict(boxstyle="round,pad=0.1", facecolor="white",
+                                    edgecolor="none", alpha=0.7))
+        # 圖例外加一行說明焓值單位
+        ax.text(0.99, 1.045, "等焓線標籤：kJ/kg 乾空氣", transform=ax.transAxes,
+                 fontsize=7.5, color="#c0620a", ha="right", va="bottom")
 
     # --- 等比容線 ---
     if show_v:
