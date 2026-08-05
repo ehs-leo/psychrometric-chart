@@ -235,7 +235,7 @@ with st.sidebar:
     st.markdown("---")
     st.header("圖表顯示設定")
     mode = st.radio("座標模式", ["簡明直角座標", "ASHRAE 風格斜交座標"], index=0)
-    skew = 0.8 if mode == "ASHRAE 風格斜交座標" else 0.0
+    skew = 1.6 if mode == "ASHRAE 風格斜交座標" else 0.0
 
     show_h = st.checkbox("顯示等焓線 (h)", value=True)
     show_v = st.checkbox("顯示等比容線 (v)", value=(mode == "ASHRAE 風格斜交座標"))
