@@ -278,12 +278,11 @@ with st.sidebar:
 
     st.markdown("---")
     st.header("圖表顯示設定")
-    mode = st.radio("座標模式", ["簡明直角座標", "ASHRAE 風格斜交座標"], index=0)
-    skew = 1.0 if mode == "ASHRAE 風格斜交座標" else 0.0
+    skew = 0.0
 
     show_h = st.checkbox("顯示等焓線 (h)", value=True)
-    show_v = st.checkbox("顯示等比容線 (v)", value=(mode == "ASHRAE 風格斜交座標"))
-    show_wb = st.checkbox("顯示等濕球溫度線 (WB)", value=(mode == "ASHRAE 風格斜交座標"))
+    show_v = st.checkbox("顯示等比容線 (v)", value=False)
+    show_wb = st.checkbox("顯示等濕球溫度線 (WB)", value=False)
 
     st.markdown("---")
     st.caption("標準大氣壓 P = 101.325 kPa")
