@@ -146,6 +146,13 @@ def draw_chart(db, rh, state, skew=0.0, show_h=True, show_v=True, show_wb=True):
 
     x_max = T_MAX + skew * W_MAX
 
+    # --- 斜交模式：把左上、右下兩個「非圖表範圍」的空白角落改用淺色網底標示 ---
+    if skew > 0:
+        ax.fill([0, 0, skew * W_MAX], [0, W_MAX, W_MAX],
+                 facecolor="#fafafa", edgecolor="#e0e0e0", hatch="////", linewidth=0.4, zorder=0)
+        ax.fill([T_MAX, x_max, x_max], [0, 0, W_MAX],
+                 facecolor="#fafafa", edgecolor="#e0e0e0", hatch="////", linewidth=0.4, zorder=0)
+
     # --- 背景骨架格線：貼合飽和曲線裁切，呈現梯形外觀（兩種模式皆適用）---
     for t in range(0, 51, 5):
         w_top = min(W_MAX, sat_w_g(float(t)))
@@ -174,7 +181,9 @@ def draw_chart(db, rh, state, skew=0.0, show_h=True, show_v=True, show_wb=True):
                  alpha=0.9 if is_sat else 0.55,
                  linewidth=1.5 if is_sat else 0.8, zorder=2)
         if len(Ts) > 3:
-            idx = min(int(len(Ts) * 0.88), len(Ts) - 1)
+            # 各 RH 線標籤沿線分散在不同位置，避免在飽和曲線附近全部擠成一團
+            frac = 0.45 + 0.42 * (level / 100.0)
+            idx = min(int(len(Ts) * frac), len(Ts) - 1)
             ax.text(Xs[idx], Ys[idx], f" {level}%", fontsize=7, color="#7f8c8d", va="center", zorder=3)
 
     # --- 等焓線：畫在有效區內（飽和曲線以下），並在貼近飽和曲線的端點直接標數字 ---
@@ -273,7 +282,7 @@ with st.sidebar:
     st.markdown("---")
     st.header("圖表顯示設定")
     mode = st.radio("座標模式", ["簡明直角座標", "ASHRAE 風格斜交座標"], index=0)
-    skew = 1.6 if mode == "ASHRAE 風格斜交座標" else 0.0
+    skew = 1.0 if mode == "ASHRAE 風格斜交座標" else 0.0
 
     show_h = st.checkbox("顯示等焓線 (h)", value=True)
     show_v = st.checkbox("顯示等比容線 (v)", value=(mode == "ASHRAE 風格斜交座標"))
