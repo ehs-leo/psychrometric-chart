@@ -1,0 +1,299 @@
+import streamlit as st
+import numpy as np
+import matplotlib
+import matplotlib.pyplot as plt
+import matplotlib.font_manager as fm
+from CoolProp.HumidAirProp import HAPropsSI
+
+# ============================================================
+# 中文字型設定（Streamlit Cloud 為 Linux 環境，需搭配 packages.txt
+# 安裝 fonts-noto-cjk，本地端 Windows 則會自動使用內建中文字型）
+# ============================================================
+def setup_chinese_font():
+    candidates = [
+        "Noto Sans CJK TC", "Noto Sans TC", "Microsoft JhengHei",
+        "PingFang TC", "Heiti TC", "SimHei", "Arial Unicode MS",
+    ]
+    available = {f.name for f in fm.fontManager.ttflist}
+    for name in candidates:
+        if name in available:
+            matplotlib.rcParams["font.family"] = name
+            return name
+    return None
+
+FONT_NAME = setup_chinese_font()
+matplotlib.rcParams["axes.unicode_minus"] = False
+
+P_ATM = 101325.0   # Pa（標準大氣壓）
+P_KPA = P_ATM / 1000.0
+R_DA = 0.287055    # kJ/(kg·K) 乾空氣氣體常數
+T_MIN, T_MAX = 0.0, 50.0
+W_MAX = 30.0        # g/kg
+
+st.set_page_config(page_title="空氣線圖查表教學工具", layout="wide")
+
+
+# ============================================================
+# 熱力性質計算（CoolProp HAPropsSI，精度高、穩定）
+# ============================================================
+@st.cache_data
+def calc_state(db_c: float, rh_pct: float):
+    T = db_c + 273.15
+    R = rh_pct / 100.0
+    W = HAPropsSI("W", "T", T, "P", P_ATM, "R", R) * 1000.0
+    WB = HAPropsSI("Twb", "T", T, "P", P_ATM, "R", R) - 273.15
+    H = HAPropsSI("H", "T", T, "P", P_ATM, "R", R) / 1000.0
+    V = HAPropsSI("V", "T", T, "P", P_ATM, "R", R)
+    DP = HAPropsSI("D", "T", T, "P", P_ATM, "R", R) - 273.15
+    return dict(W=W, WB=WB, H=H, V=V, DP=DP)
+
+
+@st.cache_data
+def sat_w_g(T_c: float) -> float:
+    """飽和濕度比 (g/kg) at given 乾球溫度"""
+    return HAPropsSI("W", "T", T_c + 273.15, "P", P_ATM, "R", 1.0) * 1000.0
+
+
+@st.cache_data
+def rh_curve(rh_pct: float, n=100):
+    Ts = np.linspace(T_MIN, T_MAX, n)
+    Ws = []
+    for t in Ts:
+        try:
+            w = HAPropsSI("W", "T", t + 273.15, "P", P_ATM, "R", rh_pct / 100.0) * 1000.0
+        except ValueError:
+            w = np.nan
+        Ws.append(w)
+    Ws = np.array(Ws)
+    mask = (~np.isnan(Ws)) & (Ws <= W_MAX)
+    return Ts[mask], Ws[mask]
+
+
+@st.cache_data
+def wb_line(wb_c: float, n=40):
+    """等濕球溫度線：T_db 從 wb_c(飽和點) 到 T_MAX"""
+    Ts = np.linspace(wb_c, T_MAX, n)
+    Ws = []
+    for t in Ts:
+        try:
+            w = HAPropsSI("W", "Twb", wb_c + 273.15, "T", t + 273.15, "P", P_ATM) * 1000.0
+        except ValueError:
+            w = np.nan
+        Ws.append(w)
+    Ws = np.array(Ws)
+    mask = (~np.isnan(Ws)) & (Ws <= W_MAX) & (Ws >= 0)
+    return Ts[mask], Ws[mask]
+
+
+def w_for_h(T_c, h_kjkg):
+    """等焓線封閉解（標準 ASHRAE 近似公式，避免大量 CoolProp 呼叫）"""
+    return (h_kjkg - 1.006 * T_c) / (2501.0 + 1.805 * T_c) * 1000.0
+
+
+def sat_w_g_vec(Ts):
+    return np.array([sat_w_g(round(float(t), 1)) for t in Ts])
+
+
+def h_line(h_kjkg: float, n=60):
+    Ts = np.linspace(T_MIN, T_MAX, n)
+    Ws = w_for_h(Ts, h_kjkg)
+    mask = (Ws >= 0) & (Ws <= W_MAX) & (Ws <= sat_w_g_vec(Ts) + 0.3)
+    return Ts[mask], Ws[mask]
+
+
+@st.cache_data
+def dew_point_T(w_target: float) -> float:
+    """飽和曲線反函數：給定濕度比，反推該濕度下的飽和(露點)溫度。
+    用於將背景骨架線裁切成貼合飽和曲線的梯形外觀。"""
+    if w_target <= sat_w_g(T_MIN):
+        return T_MIN
+    lo, hi = T_MIN, T_MAX
+    for _ in range(25):
+        mid = (lo + hi) / 2.0
+        if sat_w_g(round(mid, 2)) < w_target:
+            lo = mid
+        else:
+            hi = mid
+    return (lo + hi) / 2.0
+
+
+def w_for_v(T_c, v_target):
+    """等比容線封閉解（理想氣體近似，與原程式 specific_volume 公式互逆）"""
+    T_K = T_c + 273.15
+    return (v_target * P_KPA / (R_DA * T_K) - 1.0) / 1.6078 * 1000.0
+
+
+def v_line(v_target: float, n=60):
+    Ts = np.linspace(T_MIN, T_MAX, n)
+    Ws = w_for_v(Ts, v_target)
+    mask = (Ws >= 0) & (Ws <= W_MAX) & (Ws <= sat_w_g_vec(Ts) + 0.3)
+    return Ts[mask], Ws[mask]
+
+
+# ============================================================
+# 繪製空氣線圖（直角座標）
+# ============================================================
+def draw_chart(db, rh, state, show_h=True, show_v=True, show_wb=True):
+    fig, ax = plt.subplots(figsize=(9, 6.5), dpi=110)
+
+    # --- 背景骨架格線：貼合飽和曲線裁切，呈現梯形外觀 ---
+    for t in range(0, 51, 5):
+        w_top = min(W_MAX, sat_w_g(float(t)))
+        if w_top <= 0:
+            continue
+        lw = 0.8 if t % 10 == 0 else 0.4
+        ax.plot([t, t], [0, w_top], color="#d5d5d5", linewidth=lw, zorder=0)
+    for wv in range(0, 31, 2):
+        t_left = dew_point_T(float(wv))
+        lw = 0.8 if wv % 10 == 0 else 0.4
+        ax.plot([t_left, 50], [wv, wv], color="#d5d5d5", linewidth=lw, zorder=0)
+
+    # --- 相對濕度曲線 ---
+    rh_levels = [10, 20, 30, 40, 50, 60, 70, 80, 90, 100]
+    for level in rh_levels:
+        Ts, Ws = rh_curve(level)
+        is_sat = level == 100
+        ax.plot(Ts, Ws,
+                 linestyle="-" if is_sat else "--",
+                 color="#2c3e50" if is_sat else "#95a5a6",
+                 alpha=0.9 if is_sat else 0.55,
+                 linewidth=1.5 if is_sat else 0.8, zorder=2)
+        if len(Ts) > 3:
+            # 各 RH 線標籤沿線分散在不同位置，避免在飽和曲線附近全部擠成一團
+            frac = 0.45 + 0.42 * (level / 100.0)
+            idx = min(int(len(Ts) * frac), len(Ts) - 1)
+            ax.text(Ts[idx], Ws[idx], f" {level}%", fontsize=7, color="#7f8c8d", va="center", zorder=3)
+
+    # --- 等焓線：畫在有效區內（飽和曲線以下），並在貼近飽和曲線的端點直接標數字 ---
+    if show_h:
+        for hv in range(10, 121, 10):
+            Ts, Ws = h_line(float(hv))
+            if len(Ts) < 2:
+                continue
+            ax.plot(Ts, Ws, color="#e67e22", linewidth=0.8, alpha=0.65, zorder=1)
+
+            # 端點在飽和曲線附近（線的起點，T 較低那端）→ 沿線方向外推一小段放標籤
+            dx, dy = Ts[0] - Ts[1], Ws[0] - Ws[1]
+            norm = max((dx**2 + dy**2) ** 0.5, 1e-6)
+            lx = Ts[0] + dx / norm * 1.3
+            ly = Ws[0] + dy / norm * 1.3
+            ax.text(lx, ly, f"{hv}", fontsize=6.5, color="#c0620a",
+                     fontweight="bold", ha="center", va="center", zorder=4,
+                     bbox=dict(boxstyle="round,pad=0.1", facecolor="white",
+                                edgecolor="none", alpha=0.7))
+        # 圖例外加一行說明焓值單位
+        ax.text(0.99, 1.045, "等焓線標籤：kJ/kg 乾空氣", transform=ax.transAxes,
+                 fontsize=7.5, color="#c0620a", ha="right", va="bottom")
+
+    # --- 等比容線 ---
+    if show_v:
+        for vv in np.arange(0.78, 0.97, 0.02):
+            Ts, Ws = v_line(float(vv))
+            if len(Ts) < 2:
+                continue
+            ax.plot(Ts, Ws, color="#8e44ad", linewidth=0.6, alpha=0.4, zorder=1)
+
+    # --- 等濕球溫度線 ---
+    if show_wb:
+        for wbv in range(0, 36, 5):
+            Ts, Ws = wb_line(float(wbv))
+            if len(Ts) < 2:
+                continue
+            ax.plot(Ts, Ws, color="#2980b9", linewidth=0.5, alpha=0.4, zorder=1)
+
+    # --- 狀態點與查表輔助線 ---
+    w = state["W"]
+    wb = state["WB"]
+    h = state["H"]
+
+    ax.plot(db, w, "o", color="#e74c3c", markersize=8, zorder=6, label="狀態點 P")
+    ax.plot([db, db], [0, w], "r--", linewidth=1.5, label="① 乾球溫度 DB", zorder=5)
+    ax.plot([db, 50], [w, w], "g--", linewidth=1.5, label="② 濕度比 W", zorder=5)
+
+    w_sat_wb = sat_w_g(round(wb, 1))
+    ax.plot([db, wb], [w, w_sat_wb], "b-.", linewidth=1.5, label="③ 濕球溫度 WB", zorder=5)
+
+    ax.annotate(
+        f" P ({db:.1f}°C, {rh:.0f}%)\n W={w:.2f} g/kg\n h={h:.1f} kJ/kg",
+        xy=(db, w), xytext=(max(db - 16, 1), min(w + 3, 27)),
+        bbox=dict(boxstyle="round,pad=0.4", facecolor="#fff9c4", alpha=0.9),
+        arrowprops=dict(arrowstyle="->", connectionstyle="arc3,rad=0"),
+        fontsize=9, zorder=7,
+    )
+
+    ax.set_xlim(0, T_MAX)
+    ax.set_ylim(0, W_MAX)
+    ax.set_xticks(list(range(0, 51, 10)))
+    ax.set_xticklabels([str(t) for t in range(0, 51, 10)])
+    ax.set_xlabel("乾球溫度 Dry-Bulb Temperature, DB (°C)", fontsize=10, fontweight="bold")
+    ax.set_ylabel("濕度比 Humidity Ratio, W (g/kg 乾空氣)", fontsize=10, fontweight="bold")
+    ax.set_title("空氣線圖（直角座標，簡明版）", fontsize=13, fontweight="bold", pad=10)
+    ax.grid(True, linestyle=":", alpha=0.3)
+    ax.legend(loc="upper left", fontsize=8, framealpha=0.9)
+    fig.tight_layout()
+    return fig
+
+
+# ============================================================
+# UI
+# ============================================================
+with st.sidebar:
+    st.header("輸入參數")
+    db = st.number_input("乾球溫度 DB (°C)", min_value=0.0, max_value=50.0, value=25.0, step=0.5)
+    rh = st.number_input("相對濕度 RH (%)", min_value=0.0, max_value=100.0, value=50.0, step=1.0)
+
+    st.markdown("---")
+    st.header("圖表顯示設定")
+    show_h = st.checkbox("顯示等焓線 (h)", value=True)
+    show_v = st.checkbox("顯示等比容線 (v)", value=False)
+    show_wb = st.checkbox("顯示等濕球溫度線 (WB)", value=False)
+
+    st.markdown("---")
+    st.caption("標準大氣壓 P = 101.325 kPa")
+    if FONT_NAME is None:
+        st.warning("⚠️ 目前環境找不到中文字型，圖表中文可能顯示為方框。部署到 Streamlit Cloud 時請加入 packages.txt（見下方說明）。")
+
+state = calc_state(db, rh)
+
+col_chart, col_info = st.columns([1.55, 1])
+
+with col_chart:
+    fig = draw_chart(db, rh, state, show_h=show_h, show_v=show_v, show_wb=show_wb)
+    st.pyplot(fig, width="stretch")
+
+with col_info:
+    st.subheader("📊 查表與計算結果")
+    m1, m2 = st.columns(2)
+    m1.metric("濕球溫度 WB", f"{state['WB']:.2f} °C")
+    m2.metric("濕度比 W", f"{state['W']:.2f} g/kg")
+    m1.metric("焓值 h", f"{state['H']:.2f} kJ/kg")
+    m2.metric("比容 v", f"{state['V']:.4f} m³/kg")
+    st.metric("露點溫度 DP", f"{state['DP']:.2f} °C")
+
+    st.subheader("📝 一步步查表教學說明")
+    steps_text = f"""
+**步驟一：定位狀態點**
+1. 在橫軸找到乾球溫度 DB = {db:.1f}°C。
+2. 沿垂直線向上延伸，找到與相對濕度 RH = {rh:.0f}% 弧線的交點 P。
+3. 點 P 即為目前空氣狀態點。
+
+**步驟二：讀取濕度比 W**
+- 從點 P 向右拉水平線至縱軸。
+- 讀出濕度比 W ≈ **{state['W']:.2f} g/kg 乾空氣**。
+
+**步驟三：讀取濕球溫度 WB**
+- 從點 P 沿左上方等濕球（等焓）斜線移動，至 100% 飽和曲線的交點。
+- 對應溫度即為濕球溫度 WB ≈ **{state['WB']:.2f} °C**。
+
+**步驟四：讀取焓值 h**
+- 沿與焓線平行的斜線延伸至圖表外側的焓刻度尺。
+- 讀出焓值 h ≈ **{state['H']:.2f} kJ/kg 乾空氣**。
+
+**步驟五：讀取比容 v**
+- 觀察穿過點 P 附近的比容線（陡峭斜線族）。
+- 比例內插得出比容 v ≈ **{state['V']:.4f} m³/kg 乾空氣**。
+
+**補充：露點溫度 DP**
+- 從點 P 向左水平延伸至 100% 飽和曲線，對應溫度即為露點 DP ≈ **{state['DP']:.2f} °C**。
+"""
+    st.markdown(steps_text)
